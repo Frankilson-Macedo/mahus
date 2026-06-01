@@ -1,26 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, query, orderBy, serverTimestamp
 } from "firebase/firestore";
+import {
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject
+} from "firebase/storage";
 
-// ===== FIREBASE CONFIG =====
-// Substitua com suas credenciais do Firebase Console
-  const firebaseConfig = {
-    apiKey: "AIzaSyAObFJSulk3zLFYyYM7-M2eOZ2NUKqqaXo",
-    authDomain: "mahus-38031.firebaseapp.com",
-    projectId: "mahus-38031",
-    storageBucket: "mahus-38031.firebasestorage.app",
-    messagingSenderId: "300375851172",
-    appId: "1:300375851172:web:93af2f814c9c61e43ba631",
-    measurementId: "G-Z9BK2JQM08"
-  };
+const firebaseConfig = {
+  apiKey: "AIzaSyAObFJSulk3zLFYyYM7-M2eOZ2NUKqqaXo",
+  authDomain: "mahus-38031.firebaseapp.com",
+  projectId: "mahus-38031",
+  storageBucket: "mahus-38031.firebasestorage.app",
+  messagingSenderId: "300375851172",
+  appId: "1:300375851172:web:93af2f814c9c61e43ba631",
+  measurementId: "G-Z9BK2JQM08"
+};
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
-// ===== TAMANHOS =====
 const TAMANHOS = {
   infantil: ["1 ano","2 anos","3 anos","4 anos","5 anos","6 anos","7 anos","8 anos","9 anos","10 anos"],
   feminino: ["PP","P","M","G","GG","XG","EXG"],
@@ -40,7 +41,6 @@ const STATUS_PEDIDO = {
   cancelado: { label: "Cancelado", color: "#ef4444", bg: "#fee2e2" }
 };
 
-// ===== HELPERS =====
 const fmt = (v) => v?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) ?? "R$ 0,00";
 const fmtDate = (ts) => {
   if (!ts) return "—";
@@ -48,13 +48,11 @@ const fmtDate = (ts) => {
   return d.toLocaleDateString("pt-BR");
 };
 
-// ===== ITEM DO PEDIDO =====
 function ItemRow({ item, onChange, onRemove }) {
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 8, background: "#fafafa" }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-        <select value={item.categoria} onChange={e => onChange("categoria", e.target.value)}
-          style={sel}>
+        <select value={item.categoria} onChange={e => onChange("categoria", e.target.value)} style={sel}>
           <option value="">Tipo de roupa</option>
           {CATEGORIAS_ROUPA.map(c => <option key={c}>{c}</option>)}
         </select>
@@ -73,25 +71,34 @@ function ItemRow({ item, onChange, onRemove }) {
         <input type="number" placeholder="Qtd" min={1} value={item.qtd}
           onChange={e => onChange("qtd", Number(e.target.value))}
           style={{ ...inp, width: 56 }} />
-        <input type="number" placeholder="R$ Valor un." step="0.01" value={item.valor}
+        <input type="number" placeholder="R$ un." step="0.01" value={item.valor}
           onChange={e => onChange("valor", e.target.value)}
-          style={{ ...inp, width: 96 }} />
+          style={{ ...inp, width: 90 }} />
         <button onClick={onRemove} style={{ ...btnDanger, padding: "4px 10px", fontSize: 18, lineHeight: 1 }}>×</button>
       </div>
-      <input placeholder="Observação (cor, detalhe, bordado...)" value={item.obs}
+      <input placeholder="Obs: cor, bordado, detalhe..." value={item.obs}
         onChange={e => onChange("obs", e.target.value)}
         style={{ ...inp, width: "100%", fontSize: 13 }} />
     </div>
   );
 }
 
-// ===== MODAL CLIENTE =====
 function ClienteModal({ cliente, onSave, onClose }) {
   const [form, setForm] = useState(cliente || { nome: "", telefone: "", endereco: "", obs: "" });
+  const [salvando, setSalvando] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const handleSave = async () => {
+    if (!form.nome.trim()) return alert("Informe o nome");
+    setSalvando(true);
+    await onSave(form);
+    setSalvando(false);
+  };
   return (
     <Overlay onClose={onClose}>
-      <h2 style={modalTitle}>{cliente ? "Editar Cliente" : "Novo Cliente"}</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h2 style={modalTitle}>{cliente ? "Editar Cliente" : "Novo Cliente"}</h2>
+        <button onClick={onClose} style={btnX}>✕</button>
+      </div>
       <label style={lbl}>Nome *</label>
       <input value={form.nome} onChange={e => set("nome", e.target.value)} style={inp} placeholder="Nome completo" />
       <label style={lbl}>Telefone / WhatsApp</label>
@@ -100,20 +107,25 @@ function ClienteModal({ cliente, onSave, onClose }) {
       <input value={form.endereco} onChange={e => set("endereco", e.target.value)} style={inp} placeholder="Rua, número..." />
       <label style={lbl}>Observações</label>
       <textarea value={form.obs} onChange={e => set("obs", e.target.value)} style={{ ...inp, height: 72, resize: "vertical" }} placeholder="Medidas especiais, preferências..." />
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
         <button onClick={onClose} style={btnGhost}>Cancelar</button>
-        <button onClick={() => { if (!form.nome.trim()) return alert("Informe o nome"); onSave(form); }} style={btnPrimary}>Salvar</button>
+        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>
+          {salvando ? "Salvando..." : "Salvar"}
+        </button>
       </div>
     </Overlay>
   );
 }
 
-// ===== MODAL PEDIDO =====
 function PedidoModal({ pedido, clientes, onSave, onClose }) {
   const novoItem = () => ({ id: Date.now(), categoria: "", genero: "", tamanho: "", qtd: 1, valor: "", obs: "" });
   const [form, setForm] = useState(pedido || {
-    clienteId: "", status: "pendente", prazo: "", entrada: "", itens: [novoItem()], obs: ""
+    clienteId: "", status: "pendente", prazo: "", entrada: "", itens: [novoItem()], obs: "", imagemUrl: ""
   });
+  const [salvando, setSalvando] = useState(false);
+  const [uploadando, setUploadando] = useState(false);
+  const fileRef = useRef();
+
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setItem = (idx, k, v) => setForm(p => {
     const itens = [...p.itens];
@@ -124,9 +136,35 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
   const removeItem = (idx) => setForm(p => ({ ...p, itens: p.itens.filter((_, i) => i !== idx) }));
   const total = form.itens.reduce((s, i) => s + (Number(i.valor) || 0) * (Number(i.qtd) || 0), 0);
 
+  const handleImagem = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadando(true);
+    try {
+      const storageRef = ref(storage, `pedidos/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      set("imagemUrl", url);
+    } catch (err) {
+      alert("Erro ao enviar imagem. Verifique as regras do Firebase Storage.");
+    }
+    setUploadando(false);
+  };
+
+  const handleSave = async () => {
+    if (!form.clienteId) return alert("Selecione o cliente");
+    if (form.itens.length === 0) return alert("Adicione pelo menos um item");
+    setSalvando(true);
+    await onSave({ ...form, total });
+    setSalvando(false);
+  };
+
   return (
-    <Overlay onClose={onClose}>
-      <h2 style={modalTitle}>{pedido ? "Editar Pedido" : "Novo Pedido"}</h2>
+    <Overlay onClose={null}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h2 style={modalTitle}>{pedido ? "Editar Pedido" : "Novo Pedido"}</h2>
+        <button onClick={onClose} style={btnX}>✕</button>
+      </div>
       <label style={lbl}>Cliente *</label>
       <select value={form.clienteId} onChange={e => set("clienteId", e.target.value)} style={sel}>
         <option value="">Selecione o cliente</option>
@@ -149,6 +187,24 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
             onChange={e => set("entrada", e.target.value)} style={inp} />
         </div>
       </div>
+
+      <label style={lbl}>Foto de referência</label>
+      <div style={{ marginBottom: 10 }}>
+        {form.imagemUrl ? (
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <img src={form.imagemUrl} alt="referência" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+            <button onClick={() => set("imagemUrl", "")}
+              style={{ position: "absolute", top: 6, right: 6, background: "#ef4444", color: "#fff", border: "none", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontWeight: 700, fontSize: 14, lineHeight: 1 }}>×</button>
+          </div>
+        ) : (
+          <button onClick={() => fileRef.current.click()}
+            style={{ ...btnGhost, width: "100%", fontSize: 13, padding: "10px 0" }} disabled={uploadando}>
+            {uploadando ? "Enviando..." : "📷 Selecionar imagem"}
+          </button>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" onChange={handleImagem} style={{ display: "none" }} />
+      </div>
+
       <label style={lbl}>Itens do Pedido</label>
       {form.itens.map((item, idx) => (
         <ItemRow key={item.id} item={item}
@@ -156,39 +212,40 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
           onRemove={() => removeItem(idx)} />
       ))}
       <button onClick={addItem} style={{ ...btnGhost, marginBottom: 8, width: "100%", fontSize: 14 }}>+ Adicionar item</button>
+
       <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
-        <span style={{ fontSize: 13, color: "#166534" }}>Total do pedido: </span>
+        <span style={{ fontSize: 13, color: "#166534" }}>Total: </span>
         <strong style={{ fontSize: 16, color: "#166534" }}>{fmt(total)}</strong>
-        {form.entrada > 0 && (
+        {Number(form.entrada) > 0 && (
           <span style={{ fontSize: 13, color: "#6b7280", marginLeft: 8 }}>
             · Saldo: {fmt(total - Number(form.entrada))}
           </span>
         )}
       </div>
-      <label style={lbl}>Observações gerais do pedido</label>
+
+      <label style={lbl}>Observações gerais</label>
       <textarea value={form.obs} onChange={e => set("obs", e.target.value)}
         style={{ ...inp, height: 60, resize: "vertical" }} placeholder="Anotações sobre o pedido..." />
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
         <button onClick={onClose} style={btnGhost}>Cancelar</button>
-        <button onClick={() => {
-          if (!form.clienteId) return alert("Selecione o cliente");
-          if (form.itens.length === 0) return alert("Adicione pelo menos um item");
-          onSave({ ...form, total });
-        }} style={btnPrimary}>Salvar Pedido</button>
+        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>
+          {salvando ? "Salvando..." : "Salvar Pedido"}
+        </button>
       </div>
     </Overlay>
   );
 }
 
-// ===== OVERLAY =====
 function Overlay({ children, onClose }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100,
-      display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "20px 0 40px"
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      overflowY: "auto", padding: "20px 0 40px"
+    }}>
       <div style={{
-        background: "#fff", borderRadius: 12, padding: 20, width: "92vw", maxWidth: 520,
+        background: "#fff", borderRadius: 12, padding: 20,
+        width: "92vw", maxWidth: 520,
         boxShadow: "0 20px 60px rgba(0,0,0,0.2)", margin: "auto"
       }}>
         {children}
@@ -197,10 +254,11 @@ function Overlay({ children, onClose }) {
   );
 }
 
-// ===== TELA CLIENTES =====
 function TelaClientes({ clientes, onAdd, onEdit, onDelete }) {
   const [busca, setBusca] = useState("");
-  const filtrados = clientes.filter(c => c.nome.toLowerCase().includes(busca.toLowerCase()) || c.telefone?.includes(busca));
+  const filtrados = clientes.filter(c =>
+    c.nome.toLowerCase().includes(busca.toLowerCase()) || c.telefone?.includes(busca)
+  );
   return (
     <div>
       <div style={topBar}>
@@ -228,10 +286,10 @@ function TelaClientes({ clientes, onAdd, onEdit, onDelete }) {
   );
 }
 
-// ===== TELA PEDIDOS =====
 function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [pedidoImagem, setPedidoImagem] = useState(null);
   const getNome = (id) => clientes.find(c => c.id === id)?.nome ?? "Cliente";
   const filtrados = pedidos.filter(p => {
     const nome = getNome(p.clienteId).toLowerCase();
@@ -267,7 +325,7 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
                   <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
                 </div>
                 <div style={cardSub}>
-                  📅 {p.prazo ? `Prazo: ${p.prazo}` : "Sem prazo"} · {p.itens?.length || 0} iten(s)
+                  📅 {p.prazo ? `Prazo: ${p.prazo}` : "Sem prazo"} · {p.itens?.length || 0} item(ns)
                 </div>
                 {p.itens?.map((item, i) => (
                   <div key={i} style={{ fontSize: 12, color: "#374151", marginTop: 2, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
@@ -276,9 +334,15 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
                     {item.obs && <span style={{ color: "#9ca3af" }}> · {item.obs}</span>}
                   </div>
                 ))}
-                <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: "#166534" }}>{fmt(p.total)}</span>
                   {p.entrada > 0 && <span style={{ fontSize: 12, color: "#6b7280" }}>Entrada: {fmt(Number(p.entrada))} · Saldo: {fmt(p.total - Number(p.entrada))}</span>}
+                  {p.imagemUrl && (
+                    <button onClick={() => setPedidoImagem(p.imagemUrl)}
+                      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#f9fafb", cursor: "pointer", color: "#374151" }}>
+                      📷 Ver foto
+                    </button>
+                  )}
                 </div>
                 {p.obs && <div style={{ ...cardSub, fontStyle: "italic", marginTop: 4 }}>{p.obs}</div>}
               </div>
@@ -298,14 +362,18 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
           </div>
         );
       })}
+      {pedidoImagem && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setPedidoImagem(null)}>
+          <img src={pedidoImagem} alt="referência" style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 10 }} />
+        </div>
+      )}
     </div>
   );
 }
 
-// ===== DASHBOARD =====
 function Dashboard({ pedidos, clientes }) {
   const total = pedidos.reduce((s, p) => s + (p.total || 0), 0);
-  const entregues = pedidos.filter(p => p.status === "entregue").reduce((s, p) => s + (p.total || 0), 0);
   const pendentes = pedidos.filter(p => ["pendente", "producao", "pronto"].includes(p.status));
   const aReceber = pendentes.reduce((s, p) => s + Math.max(0, (p.total || 0) - (Number(p.entrada) || 0)), 0);
 
@@ -369,18 +437,19 @@ function StatCard({ titulo, valor, sub, cor }) {
 }
 
 function Empty({ texto }) {
-  return <div style={{ textAlign: "center", padding: "40px 0", color: "#9ca3af", fontSize: 14 }}>
-    <div style={{ fontSize: 40, marginBottom: 8 }}>🧵</div>
-    {texto}
-  </div>;
+  return (
+    <div style={{ textAlign: "center", padding: "40px 0", color: "#9ca3af", fontSize: 14 }}>
+      <div style={{ fontSize: 40, marginBottom: 8 }}>🧵</div>
+      {texto}
+    </div>
+  );
 }
 
-// ===== APP PRINCIPAL =====
 export default function App() {
   const [aba, setAba] = useState("dashboard");
   const [clientes, setClientes] = useState([]);
   const [pedidos, setPedidos] = useState([]);
-  const [modalCliente, setModalCliente] = useState(null); // null | "novo" | objeto
+  const [modalCliente, setModalCliente] = useState(null);
   const [modalPedido, setModalPedido] = useState(null);
 
   useEffect(() => {
@@ -406,7 +475,8 @@ export default function App() {
     const data = {
       clienteId: form.clienteId, status: form.status, prazo: form.prazo || "",
       entrada: Number(form.entrada) || 0, itens: form.itens, total: form.total,
-      obs: form.obs || "", atualizadoEm: serverTimestamp()
+      obs: form.obs || "", imagemUrl: form.imagemUrl || "",
+      atualizadoEm: serverTimestamp()
     };
     if (modalPedido?.id) await updateDoc(doc(db, "pedidos", modalPedido.id), data);
     else await addDoc(collection(db, "pedidos"), { ...data, criadoEm: serverTimestamp() });
@@ -429,13 +499,11 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", maxWidth: 540, margin: "0 auto", background: "#f9fafb", minHeight: "100vh" }}>
-      {/* Header */}
       <div style={{ background: "#7c3aed", color: "#fff", padding: "14px 16px 10px", position: "sticky", top: 0, zIndex: 50 }}>
-        <div style={{ fontSize: 18, fontWeight: 700 }}>✂️ Confecção</div>
+        <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.5 }}>✂️ MAHUS Confecções</div>
         <div style={{ fontSize: 12, opacity: 0.8 }}>Gerenciamento de pedidos</div>
       </div>
 
-      {/* Conteúdo */}
       <div style={{ padding: "12px 12px 80px" }}>
         {aba === "dashboard" && <Dashboard pedidos={pedidos} clientes={clientes} />}
         {aba === "clientes" && (
@@ -453,7 +521,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Bottom nav */}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "center" }}>
         <div style={{ display: "flex", maxWidth: 540, width: "100%" }}>
           {abas.map(a => (
@@ -470,7 +537,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Modals */}
       {modalCliente && (
         <ClienteModal
           cliente={modalCliente === "novo" ? null : modalCliente}
@@ -488,7 +554,6 @@ export default function App() {
   );
 }
 
-// ===== ESTILOS BASE =====
 const inp = { border: "1px solid #d1d5db", borderRadius: 7, padding: "8px 10px", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box", background: "#fff" };
 const sel = { ...inp, cursor: "pointer" };
 const lbl = { display: "block", fontSize: 13, fontWeight: 500, color: "#374151", marginBottom: 4, marginTop: 10 };
@@ -500,7 +565,8 @@ const btnPrimary = { background: "#7c3aed", color: "#fff", border: "none", borde
 const btnGhost = { background: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: 8, padding: "9px 16px", fontSize: 14, cursor: "pointer" };
 const btnDanger = { background: "#fee2e2", color: "#ef4444", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 };
 const btnIcon = { background: "none", border: "1px solid #e5e7eb", borderRadius: 6, padding: "5px 8px", cursor: "pointer", fontSize: 16 };
+const btnX = { background: "none", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 9px", cursor: "pointer", fontSize: 16, color: "#6b7280", lineHeight: 1 };
 const topBar = { display: "flex", gap: 8, marginBottom: 12 };
 const chip = { fontSize: 12, padding: "4px 10px", borderRadius: 20, border: "1px solid #d1d5db", background: "#fff", color: "#6b7280", cursor: "pointer" };
 const chipAtivo = { ...chip, background: "#7c3aed", color: "#fff", borderColor: "#7c3aed", fontWeight: 600 };
-const modalTitle = { fontSize: 17, fontWeight: 700, color: "#111827", margin: "0 0 12px" };
+const modalTitle = { fontSize: 17, fontWeight: 700, color: "#111827", margin: 0 };
