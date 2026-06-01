@@ -4,9 +4,8 @@ import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, query, orderBy, serverTimestamp
 } from "firebase/firestore";
-import {
-  getStorage, ref, uploadBytes, getDownloadURL, deleteObject
-} from "firebase/storage";
+const CLOUDINARY_CLOUD = "djmteuybt";
+const CLOUDINARY_UPLOAD_PRESET = "mahus_unsigned";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAObFJSulk3zLFYyYM7-M2eOZ2NUKqqaXo",
@@ -20,7 +19,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const storage = getStorage(app);
 
 const TAMANHOS = {
   infantil: ["1 ano","2 anos","3 anos","4 anos","5 anos","6 anos","7 anos","8 anos","9 anos","10 anos"],
@@ -141,12 +139,21 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
     if (!file) return;
     setUploadando(true);
     try {
-      const storageRef = ref(storage, `pedidos/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      set("imagemUrl", url);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (data.secure_url) {
+        set("imagemUrl", data.secure_url);
+      } else {
+        alert("Erro ao enviar imagem. Verifique o upload preset no Cloudinary.");
+      }
     } catch (err) {
-      alert("Erro ao enviar imagem. Verifique as regras do Firebase Storage.");
+      alert("Erro ao enviar imagem: " + err.message);
     }
     setUploadando(false);
   };
