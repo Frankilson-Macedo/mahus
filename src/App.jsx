@@ -27,8 +27,7 @@ const TAMANHOS = {
 };
 
 const CATEGORIAS_ROUPA = [
-  "Vestido","Blusa","Calça","Short","Saia","Conjunto","Macacão",
-  "Pijama","Camisa","Bermuda","Moletom","Legging","Body","Outro"
+  "Camisa","Camisa Baby Look","Calça","Short","Short-Saia","Outros"
 ];
 
 const STATUS_PEDIDO = {
@@ -88,8 +87,7 @@ function ClienteModal({ cliente, onSave, onClose }) {
   const handleSave = async () => {
     if (!form.nome.trim()) return alert("Informe o nome");
     setSalvando(true);
-    await onSave(form);
-    setSalvando(false);
+    try { await onSave(form); } finally { setSalvando(false); }
   };
   return (
     <Overlay onClose={onClose}>
@@ -162,8 +160,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
     if (!form.clienteId) return alert("Selecione o cliente");
     if (form.itens.length === 0) return alert("Adicione pelo menos um item");
     setSalvando(true);
-    await onSave({ ...form, total });
-    setSalvando(false);
+    try { await onSave({ ...form, total }); } finally { setSalvando(false); }
   };
 
   return (
