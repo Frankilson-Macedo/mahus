@@ -4,6 +4,7 @@ import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, query, orderBy, serverTimestamp
 } from "firebase/firestore";
+
 const CLOUDINARY_CLOUD = "djmteuybt";
 const CLOUDINARY_UPLOAD_PRESET = "mahus_unsigned";
 
@@ -26,25 +27,22 @@ const TAMANHOS = {
   masculino: ["PP","P","M","G","GG"]
 };
 
-const CATEGORIAS_ROUPA = [
-  "Camisa","Camisa Baby Look","Calça","Short","Short-Saia","Outros"
-];
+const CATEGORIAS_ROUPA = ["Camisa","Camisa Baby Look","Calça","Short","Short-Saia","Outros"];
 
 const STATUS_PEDIDO = {
-  pendente: { label: "Pendente", color: "#f59e0b", bg: "#fef3c7" },
-  producao: { label: "Em Produção", color: "#3b82f6", bg: "#dbeafe" },
-  pronto: { label: "Pronto", color: "#10b981", bg: "#d1fae5" },
-  entregue: { label: "Entregue", color: "#6b7280", bg: "#f3f4f6" },
-  cancelado: { label: "Cancelado", color: "#ef4444", bg: "#fee2e2" }
+  pendente:  { label: "Pendente",     color: "#f59e0b", bg: "#fef3c7" },
+  producao:  { label: "Em Produção",  color: "#3b82f6", bg: "#dbeafe" },
+  pronto:    { label: "Pronto",       color: "#10b981", bg: "#d1fae5" },
+  entregue:  { label: "Entregue",     color: "#6b7280", bg: "#f3f4f6" },
+  cancelado: { label: "Cancelado",    color: "#ef4444", bg: "#fee2e2" }
 };
 
-const fmt = (v) => v?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) ?? "R$ 0,00";
-const fmtDate = (ts) => {
-  if (!ts) return "—";
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
-  return d.toLocaleDateString("pt-BR");
-};
+const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 
+const fmt = (v) => (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const hoje = () => new Date().toISOString().slice(0, 10);
+
+// ── ItemRow ──────────────────────────────────────────────────────────────────
 function ItemRow({ item, onChange, onRemove }) {
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 8, background: "#fafafa" }}>
@@ -80,6 +78,26 @@ function ItemRow({ item, onChange, onRemove }) {
   );
 }
 
+// ── Overlay ───────────────────────────────────────────────────────────────────
+function Overlay({ children }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100,
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      overflowY: "auto", padding: "20px 0 40px"
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 12, padding: 20,
+        width: "92vw", maxWidth: 520,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.2)", margin: "auto"
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── ClienteModal ──────────────────────────────────────────────────────────────
 function ClienteModal({ cliente, onSave, onClose }) {
   const [form, setForm] = useState(cliente || { nome: "", telefone: "", endereco: "", obs: "" });
   const [salvando, setSalvando] = useState(false);
@@ -90,7 +108,7 @@ function ClienteModal({ cliente, onSave, onClose }) {
     try { await onSave(form); } finally { setSalvando(false); }
   };
   return (
-    <Overlay onClose={onClose}>
+    <Overlay>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={modalTitle}>{cliente ? "Editar Cliente" : "Novo Cliente"}</h2>
         <button onClick={onClose} style={btnX}>✕</button>
@@ -105,18 +123,18 @@ function ClienteModal({ cliente, onSave, onClose }) {
       <textarea value={form.obs} onChange={e => set("obs", e.target.value)} style={{ ...inp, height: 72, resize: "vertical" }} placeholder="Medidas especiais, preferências..." />
       <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
         <button onClick={onClose} style={btnGhost}>Cancelar</button>
-        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>
-          {salvando ? "Salvando..." : "Salvar"}
-        </button>
+        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>{salvando ? "Salvando..." : "Salvar"}</button>
       </div>
     </Overlay>
   );
 }
 
+// ── PedidoModal ───────────────────────────────────────────────────────────────
 function PedidoModal({ pedido, clientes, onSave, onClose }) {
   const novoItem = () => ({ id: Date.now(), categoria: "", genero: "", tamanho: "", qtd: 1, valor: "", obs: "" });
   const [form, setForm] = useState(pedido || {
-    clienteId: "", status: "pendente", prazo: "", entrada: "", itens: [novoItem()], obs: "", imagemUrl: ""
+    clienteId: "", status: "pendente", dataPedido: hoje(), prazo: "",
+    entrada: "", itens: [novoItem()], obs: "", imagemUrl: ""
   });
   const [salvando, setSalvando] = useState(false);
   const [uploadando, setUploadando] = useState(false);
@@ -137,22 +155,14 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
     if (!file) return;
     setUploadando(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
-        method: "POST",
-        body: formData
-      });
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: fd });
       const data = await res.json();
-      if (data.secure_url) {
-        set("imagemUrl", data.secure_url);
-      } else {
-        alert("Erro ao enviar imagem. Verifique o upload preset no Cloudinary.");
-      }
-    } catch (err) {
-      alert("Erro ao enviar imagem: " + err.message);
-    }
+      if (data.secure_url) set("imagemUrl", data.secure_url);
+      else alert("Erro ao enviar imagem. Verifique o upload preset no Cloudinary.");
+    } catch (err) { alert("Erro: " + err.message); }
     setUploadando(false);
   };
 
@@ -164,7 +174,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
   };
 
   return (
-    <Overlay onClose={null}>
+    <Overlay>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={modalTitle}>{pedido ? "Editar Pedido" : "Novo Pedido"}</h2>
         <button onClick={onClose} style={btnX}>✕</button>
@@ -174,6 +184,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
         <option value="">Selecione o cliente</option>
         {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
       </select>
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
         <div style={{ flex: 1, minWidth: 120 }}>
           <label style={lbl}>Status</label>
@@ -182,7 +193,13 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
           </select>
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>
-          <label style={lbl}>Prazo de entrega</label>
+          <label style={lbl}>📋 Data do pedido</label>
+          <input type="date" value={form.dataPedido} onChange={e => set("dataPedido", e.target.value)} style={inp} />
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 120 }}>
+          <label style={lbl}>📅 Prazo de entrega</label>
           <input type="date" value={form.prazo} onChange={e => set("prazo", e.target.value)} style={inp} />
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>
@@ -195,7 +212,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
       <label style={lbl}>Foto de referência</label>
       <div style={{ marginBottom: 10 }}>
         {form.imagemUrl ? (
-          <div style={{ position: "relative", display: "inline-block" }}>
+          <div style={{ position: "relative", display: "inline-block", width: "100%" }}>
             <img src={form.imagemUrl} alt="referência" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
             <button onClick={() => set("imagemUrl", "")}
               style={{ position: "absolute", top: 6, right: 6, background: "#ef4444", color: "#fff", border: "none", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontWeight: 700, fontSize: 14, lineHeight: 1 }}>×</button>
@@ -211,9 +228,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
 
       <label style={lbl}>Itens do Pedido</label>
       {form.itens.map((item, idx) => (
-        <ItemRow key={item.id} item={item}
-          onChange={(k, v) => setItem(idx, k, v)}
-          onRemove={() => removeItem(idx)} />
+        <ItemRow key={item.id} item={item} onChange={(k, v) => setItem(idx, k, v)} onRemove={() => removeItem(idx)} />
       ))}
       <button onClick={addItem} style={{ ...btnGhost, marginBottom: 8, width: "100%", fontSize: 14 }}>+ Adicionar item</button>
 
@@ -221,9 +236,7 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
         <span style={{ fontSize: 13, color: "#166534" }}>Total: </span>
         <strong style={{ fontSize: 16, color: "#166534" }}>{fmt(total)}</strong>
         {Number(form.entrada) > 0 && (
-          <span style={{ fontSize: 13, color: "#6b7280", marginLeft: 8 }}>
-            · Saldo: {fmt(total - Number(form.entrada))}
-          </span>
+          <span style={{ fontSize: 13, color: "#6b7280", marginLeft: 8 }}>· Saldo: {fmt(total - Number(form.entrada))}</span>
         )}
       </div>
 
@@ -232,37 +245,18 @@ function PedidoModal({ pedido, clientes, onSave, onClose }) {
         style={{ ...inp, height: 60, resize: "vertical" }} placeholder="Anotações sobre o pedido..." />
       <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
         <button onClick={onClose} style={btnGhost}>Cancelar</button>
-        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>
-          {salvando ? "Salvando..." : "Salvar Pedido"}
-        </button>
+        <button onClick={handleSave} style={btnPrimary} disabled={salvando}>{salvando ? "Salvando..." : "Salvar Pedido"}</button>
       </div>
     </Overlay>
   );
 }
 
-function Overlay({ children, onClose }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100,
-      display: "flex", alignItems: "flex-start", justifyContent: "center",
-      overflowY: "auto", padding: "20px 0 40px"
-    }}>
-      <div style={{
-        background: "#fff", borderRadius: 12, padding: 20,
-        width: "92vw", maxWidth: 520,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.2)", margin: "auto"
-      }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
+// ── HistoricoModal ────────────────────────────────────────────────────────────
 function HistoricoModal({ cliente, pedidos, onClose }) {
   const pedidosCliente = pedidos.filter(p => p.clienteId === cliente.id);
   const totalGasto = pedidosCliente.reduce((s, p) => s + (p.total || 0), 0);
   return (
-    <Overlay onClose={null}>
+    <Overlay>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div>
           <h2 style={modalTitle}>Histórico de Pedidos</h2>
@@ -276,7 +270,7 @@ function HistoricoModal({ cliente, pedidos, onClose }) {
           <div style={{ fontSize: 12, color: "#7c3aed" }}>pedidos</div>
         </div>
         <div style={{ flex: 1, background: "#f0fdf4", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#166534" }}>{totalGasto.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#166534" }}>{fmt(totalGasto)}</div>
           <div style={{ fontSize: 12, color: "#166534" }}>total gasto</div>
         </div>
       </div>
@@ -286,7 +280,10 @@ function HistoricoModal({ cliente, pedidos, onClose }) {
         return (
           <div key={p.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", marginBottom: 8, borderLeft: `4px solid ${s.color}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-              <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
+              <div>
+                <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
+                {p.dataPedido && <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 6 }}>📋 {p.dataPedido}</span>}
+              </div>
               <span style={{ fontSize: 15, fontWeight: 700, color: "#166534" }}>{fmt(p.total)}</span>
             </div>
             {p.prazo && <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>📅 Prazo: {p.prazo}</div>}
@@ -297,15 +294,9 @@ function HistoricoModal({ cliente, pedidos, onClose }) {
                 {item.obs && <span style={{ color: "#9ca3af" }}> · {item.obs}</span>}
               </div>
             ))}
-            {p.entrada > 0 && (
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                Entrada: {fmt(Number(p.entrada))} · Saldo: {fmt(p.total - Number(p.entrada))}
-              </div>
-            )}
+            {p.entrada > 0 && <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>Entrada: {fmt(Number(p.entrada))} · Saldo: {fmt(p.total - Number(p.entrada))}</div>}
             {p.obs && <div style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic", marginTop: 4 }}>{p.obs}</div>}
-            {p.imagemUrl && (
-              <img src={p.imagemUrl} alt="ref" style={{ marginTop: 6, width: "100%", maxHeight: 120, objectFit: "cover", borderRadius: 6 }} />
-            )}
+            {p.imagemUrl && <img src={p.imagemUrl} alt="ref" style={{ marginTop: 6, width: "100%", maxHeight: 120, objectFit: "cover", borderRadius: 6 }} />}
           </div>
         );
       })}
@@ -313,6 +304,7 @@ function HistoricoModal({ cliente, pedidos, onClose }) {
   );
 }
 
+// ── TelaClientes ──────────────────────────────────────────────────────────────
 function TelaClientes({ clientes, pedidos, onAdd, onEdit, onDelete }) {
   const [busca, setBusca] = useState("");
   const [historico, setHistorico] = useState(null);
@@ -351,19 +343,30 @@ function TelaClientes({ clientes, pedidos, onAdd, onEdit, onDelete }) {
           </div>
         );
       })}
-      {historico && (
-        <HistoricoModal cliente={historico} pedidos={pedidos} onClose={() => setHistorico(null)} />
-      )}
+      {historico && <HistoricoModal cliente={historico} pedidos={pedidos} onClose={() => setHistorico(null)} />}
     </div>
   );
 }
 
+// ── TelaPedidos ───────────────────────────────────────────────────────────────
 function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [ordenacao, setOrdenacao] = useState("dataPedido_desc");
   const [pedidoImagem, setPedidoImagem] = useState(null);
   const getNome = (id) => clientes.find(c => c.id === id)?.nome ?? "Cliente";
-  const filtrados = pedidos.filter(p => {
+
+  const ordenados = [...pedidos].sort((a, b) => {
+    const [campo, dir] = ordenacao.split("_");
+    const va = campo === "dataPedido" ? (a.dataPedido || "") : (a.prazo || "");
+    const vb = campo === "dataPedido" ? (b.dataPedido || "") : (b.prazo || "");
+    if (!va && !vb) return 0;
+    if (!va) return 1;
+    if (!vb) return -1;
+    return dir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+
+  const filtrados = ordenados.filter(p => {
     const nome = getNome(p.clienteId).toLowerCase();
     const matchBusca = nome.includes(busca.toLowerCase()) || p.obs?.toLowerCase().includes(busca.toLowerCase());
     const matchStatus = filtroStatus === "todos" || p.status === filtroStatus;
@@ -376,7 +379,9 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔍 Buscar pedido..." style={{ ...inp, flex: 1 }} />
         <button onClick={onAdd} style={btnPrimary}>+ Novo</button>
       </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+
+      {/* Filtro status */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
         <button onClick={() => setFiltroStatus("todos")} style={filtroStatus === "todos" ? chipAtivo : chip}>Todos</button>
         {Object.entries(STATUS_PEDIDO).map(([k, v]) => (
           <button key={k} onClick={() => setFiltroStatus(k)}
@@ -385,42 +390,60 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
           </button>
         ))}
       </div>
+
+      {/* Ordenação */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: "#6b7280", whiteSpace: "nowrap" }}>Ordenar:</span>
+        <select value={ordenacao} onChange={e => setOrdenacao(e.target.value)}
+          style={{ ...sel, fontSize: 12, padding: "5px 8px" }}>
+          <option value="dataPedido_desc">Data pedido (mais recente)</option>
+          <option value="dataPedido_asc">Data pedido (mais antigo)</option>
+          <option value="prazo_asc">Prazo entrega (mais urgente)</option>
+          <option value="prazo_desc">Prazo entrega (mais distante)</option>
+        </select>
+      </div>
+
       {filtrados.length === 0 && <Empty texto="Nenhum pedido encontrado" />}
       {filtrados.map(p => {
         const s = STATUS_PEDIDO[p.status];
         return (
           <div key={p.id} style={{ ...card, borderLeft: `4px solid ${s.color}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={cardTitle}>{getNome(p.clienteId)}</span>
-                  <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
-                </div>
-                <div style={cardSub}>
-                  📅 {p.prazo ? `Prazo: ${p.prazo}` : "Sem prazo"} · {p.itens?.length || 0} item(ns)
-                </div>
-                {p.itens?.map((item, i) => (
-                  <div key={i} style={{ fontSize: 12, color: "#374151", marginTop: 2, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
-                    {[item.categoria, item.genero && `(${item.genero})`, item.tamanho, item.qtd > 1 && `x${item.qtd}`].filter(Boolean).join(" ")}
-                    {item.valor && ` — ${fmt(Number(item.valor) * Number(item.qtd))}`}
-                    {item.obs && <span style={{ color: "#9ca3af" }}> · {item.obs}</span>}
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              {/* Miniatura da imagem */}
+              {p.imagemUrl && (
+                <img src={p.imagemUrl} alt="ref"
+                  onClick={() => setPedidoImagem(p.imagemUrl)}
+                  style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb", cursor: "pointer", flexShrink: 0 }} />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={cardTitle}>{getNome(p.clienteId)}</span>
+                      <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
+                      {p.dataPedido && <span style={cardSub}>📋 Pedido: {p.dataPedido}</span>}
+                      {p.prazo && <span style={cardSub}>📅 Prazo: {p.prazo}</span>}
+                    </div>
+                    {p.itens?.map((item, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#374151", marginTop: 2, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
+                        {[item.categoria, item.genero && `(${item.genero})`, item.tamanho, item.qtd > 1 && `x${item.qtd}`].filter(Boolean).join(" ")}
+                        {item.valor && ` — ${fmt(Number(item.valor) * Number(item.qtd))}`}
+                        {item.obs && <span style={{ color: "#9ca3af" }}> · {item.obs}</span>}
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#166534" }}>{fmt(p.total)}</span>
+                      {p.entrada > 0 && <span style={{ fontSize: 12, color: "#6b7280" }}>Entrada: {fmt(Number(p.entrada))} · Saldo: {fmt(p.total - Number(p.entrada))}</span>}
+                    </div>
+                    {p.obs && <div style={{ ...cardSub, fontStyle: "italic", marginTop: 4 }}>{p.obs}</div>}
                   </div>
-                ))}
-                <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: "#166534" }}>{fmt(p.total)}</span>
-                  {p.entrada > 0 && <span style={{ fontSize: 12, color: "#6b7280" }}>Entrada: {fmt(Number(p.entrada))} · Saldo: {fmt(p.total - Number(p.entrada))}</span>}
-                  {p.imagemUrl && (
-                    <button onClick={() => setPedidoImagem(p.imagemUrl)}
-                      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, border: "1px solid #d1d5db", background: "#f9fafb", cursor: "pointer", color: "#374151" }}>
-                      📷 Ver foto
-                    </button>
-                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginLeft: 8 }}>
+                    <button onClick={() => onEdit(p)} style={btnIcon}>✏️</button>
+                    <button onClick={() => { if (window.confirm("Excluir pedido?")) onDelete(p.id); }} style={btnIcon}>🗑️</button>
+                  </div>
                 </div>
-                {p.obs && <div style={{ ...cardSub, fontStyle: "italic", marginTop: 4 }}>{p.obs}</div>}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginLeft: 8 }}>
-                <button onClick={() => onEdit(p)} style={btnIcon}>✏️</button>
-                <button onClick={() => { if (window.confirm("Excluir pedido?")) onDelete(p.id); }} style={btnIcon}>🗑️</button>
               </div>
             </div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8, paddingTop: 8, borderTop: "1px solid #f3f4f6" }}>
@@ -435,7 +458,7 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
         );
       })}
       {pedidoImagem && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setPedidoImagem(null)}>
           <img src={pedidoImagem} alt="referência" style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 10 }} />
         </div>
@@ -444,6 +467,59 @@ function TelaPedidos({ pedidos, clientes, onAdd, onEdit, onDelete, onStatus }) {
   );
 }
 
+// ── GraficoMensal ─────────────────────────────────────────────────────────────
+function GraficoMensal({ pedidos }) {
+  const anoAtual = new Date().getFullYear();
+  // Usa pedidos prontos + entregues, pelo campo dataPedido
+  const dados = Array(12).fill(0).map((_, mes) => {
+    const total = pedidos
+      .filter(p => ["pronto", "entregue"].includes(p.status) && p.dataPedido)
+      .filter(p => {
+        const d = new Date(p.dataPedido + "T00:00:00");
+        return d.getFullYear() === anoAtual && d.getMonth() === mes;
+      })
+      .reduce((s, p) => s + (p.total || 0), 0);
+    return total;
+  });
+
+  const maximo = Math.max(...dados, 1);
+  const totalAno = dados.reduce((s, v) => s + v, 0);
+
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>Faturamento mensal {anoAtual}</div>
+        <div style={{ fontSize: 12, color: "#166534", fontWeight: 600 }}>{fmt(totalAno)}</div>
+      </div>
+      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 12 }}>Pedidos prontos e entregues</div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 100 }}>
+        {dados.map((v, i) => {
+          const altura = maximo > 0 ? Math.max((v / maximo) * 88, v > 0 ? 8 : 0) : 0;
+          const mesAtual = new Date().getMonth() === i;
+          return (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              {v > 0 && (
+                <div style={{ fontSize: 9, color: "#166534", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  {(v / 1000).toFixed(v >= 1000 ? 1 : 0)}{v >= 1000 ? "k" : ""}
+                </div>
+              )}
+              <div style={{
+                width: "100%", height: altura,
+                background: mesAtual ? "#7c3aed" : "#a78bfa",
+                borderRadius: "3px 3px 0 0",
+                transition: "height .4s",
+                minHeight: v > 0 ? 4 : 0
+              }} title={`${MESES[i]}: ${fmt(v)}`} />
+              <div style={{ fontSize: 9, color: mesAtual ? "#7c3aed" : "#9ca3af", fontWeight: mesAtual ? 700 : 400 }}>{MESES[i]}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ pedidos, clientes }) {
   const total = pedidos.reduce((s, p) => s + (p.total || 0), 0);
   const pendentes = pedidos.filter(p => ["pendente", "producao", "pronto"].includes(p.status));
@@ -454,9 +530,12 @@ function Dashboard({ pedidos, clientes }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
         <StatCard titulo="Total de pedidos" valor={pedidos.length} sub="pedidos cadastrados" cor="#4f46e5" />
         <StatCard titulo="Clientes" valor={clientes.length} sub="cadastrados" cor="#0891b2" />
-        <StatCard titulo="Faturamento" valor={fmt(total)} sub="valor total" cor="#059669" />
+        <StatCard titulo="Faturamento total" valor={fmt(total)} sub="todos os pedidos" cor="#059669" />
         <StatCard titulo="A receber" valor={fmt(aReceber)} sub="saldo pendente" cor="#d97706" />
       </div>
+
+      <GraficoMensal pedidos={pedidos} />
+
       <div style={card}>
         <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 15 }}>Pedidos por status</div>
         {Object.entries(STATUS_PEDIDO).map(([k, v]) => {
@@ -475,6 +554,7 @@ function Dashboard({ pedidos, clientes }) {
           );
         })}
       </div>
+
       <div style={card}>
         <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 15 }}>Últimos pedidos</div>
         {pedidos.slice(0, 5).map(p => {
@@ -485,10 +565,11 @@ function Dashboard({ pedidos, clientes }) {
               <div>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>{cliente?.nome ?? "—"}</div>
                 <span style={{ ...badge, background: s.bg, color: s.color }}>{s.label}</span>
+                {p.dataPedido && <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 6 }}>{p.dataPedido}</span>}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#166534" }}>{fmt(p.total)}</div>
-                <div style={{ fontSize: 11, color: "#9ca3af" }}>{fmtDate(p.criadoEm)}</div>
+                {p.prazo && <div style={{ fontSize: 11, color: "#9ca3af" }}>Prazo: {p.prazo}</div>}
               </div>
             </div>
           );
@@ -502,8 +583,8 @@ function StatCard({ titulo, valor, sub, cor }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "12px 14px", borderTop: `4px solid ${cor}` }}>
       <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{titulo}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: "#111827" }}>{valor}</div>
-      <div style={{ fontSize: 11, color: "#9ca3af" }}>{sub}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#111827", lineHeight: 1.2 }}>{valor}</div>
+      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{sub}</div>
     </div>
   );
 }
@@ -517,6 +598,7 @@ function Empty({ texto }) {
   );
 }
 
+// ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [aba, setAba] = useState("dashboard");
   const [clientes, setClientes] = useState([]);
@@ -539,13 +621,10 @@ export default function App() {
     setModalCliente(null);
   };
 
-  const excluirCliente = async (id) => {
-    await deleteDoc(doc(db, "clientes", id));
-  };
-
   const salvarPedido = async (form) => {
     const data = {
-      clienteId: form.clienteId, status: form.status, prazo: form.prazo || "",
+      clienteId: form.clienteId, status: form.status,
+      dataPedido: form.dataPedido || "", prazo: form.prazo || "",
       entrada: Number(form.entrada) || 0, itens: form.itens, total: form.total,
       obs: form.obs || "", imagemUrl: form.imagemUrl || "",
       atualizadoEm: serverTimestamp()
@@ -555,18 +634,10 @@ export default function App() {
     setModalPedido(null);
   };
 
-  const excluirPedido = async (id) => {
-    await deleteDoc(doc(db, "pedidos", id));
-  };
-
-  const mudarStatus = async (id, status) => {
-    await updateDoc(doc(db, "pedidos", id), { status, atualizadoEm: serverTimestamp() });
-  };
-
   const abas = [
     { key: "dashboard", icon: "📊", label: "Resumo" },
-    { key: "pedidos", icon: "🧵", label: "Pedidos" },
-    { key: "clientes", icon: "👥", label: "Clientes" },
+    { key: "pedidos",   icon: "🧵", label: "Pedidos" },
+    { key: "clientes",  icon: "👥", label: "Clientes" },
   ];
 
   return (
@@ -582,14 +653,14 @@ export default function App() {
           <TelaClientes clientes={clientes} pedidos={pedidos}
             onAdd={() => setModalCliente("novo")}
             onEdit={c => setModalCliente(c)}
-            onDelete={excluirCliente} />
+            onDelete={async (id) => { await deleteDoc(doc(db, "clientes", id)); }} />
         )}
         {aba === "pedidos" && (
           <TelaPedidos pedidos={pedidos} clientes={clientes}
             onAdd={() => setModalPedido("novo")}
             onEdit={p => setModalPedido(p)}
-            onDelete={excluirPedido}
-            onStatus={mudarStatus} />
+            onDelete={async (id) => { await deleteDoc(doc(db, "pedidos", id)); }}
+            onStatus={async (id, status) => { await updateDoc(doc(db, "pedidos", id), { status, atualizadoEm: serverTimestamp() }); }} />
         )}
       </div>
 
@@ -597,11 +668,9 @@ export default function App() {
         <div style={{ display: "flex", maxWidth: 540, width: "100%" }}>
           {abas.map(a => (
             <button key={a.key} onClick={() => setAba(a.key)}
-              style={{
-                flex: 1, padding: "10px 0", border: "none", background: "none", cursor: "pointer",
+              style={{ flex: 1, padding: "10px 0", border: "none", background: "none", cursor: "pointer",
                 borderTop: aba === a.key ? "3px solid #7c3aed" : "3px solid transparent",
-                color: aba === a.key ? "#7c3aed" : "#6b7280"
-              }}>
+                color: aba === a.key ? "#7c3aed" : "#6b7280" }}>
               <div style={{ fontSize: 22 }}>{a.icon}</div>
               <div style={{ fontSize: 11, fontWeight: aba === a.key ? 600 : 400 }}>{a.label}</div>
             </button>
@@ -626,6 +695,7 @@ export default function App() {
   );
 }
 
+// ── Estilos ───────────────────────────────────────────────────────────────────
 const inp = { border: "1px solid #d1d5db", borderRadius: 7, padding: "8px 10px", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box", background: "#fff" };
 const sel = { ...inp, cursor: "pointer" };
 const lbl = { display: "block", fontSize: 13, fontWeight: 500, color: "#374151", marginBottom: 4, marginTop: 10 };
